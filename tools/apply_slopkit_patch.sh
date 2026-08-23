@@ -77,8 +77,12 @@ if ! grep -q 'sendPayloadToElfldr(cfg.autoload, "../../payloads/"' slopkit/poops
     || ! grep -q '"../../shared/elfldr-ps5.elf"' slopkit/p2jb.html \
     || ! grep -q 'function startAutoload' slopkit/poops.html \
     || ! grep -q 'startAutoload();' slopkit/poops.html \
+    || ! grep -q 'function elfldrAccepting' slopkit/poops.html \
+    || ! grep -q 'AUTOLOAD-WAIT' slopkit/poops.html \
     || ! grep -q 'function startAutoload' slopkit/p2jb.html \
-    || ! grep -q 'startAutoload();' slopkit/p2jb.html; then
+    || ! grep -q 'startAutoload();' slopkit/p2jb.html \
+    || ! grep -q 'function elfldrAccepting' slopkit/p2jb.html \
+    || ! grep -q 'AUTOLOAD-WAIT' slopkit/p2jb.html; then
     echo "Error: slopkit patch verification FAILED — integration markers missing."
     echo "patches/slopkit-autoload.patch is incomplete or out of date."
     echo "Regenerate it from the pristine submodule:"

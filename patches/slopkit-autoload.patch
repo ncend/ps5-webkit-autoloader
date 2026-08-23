@@ -1,5 +1,5 @@
 diff --git a/slopkit/p2jb.html b/slopkit/p2jb.html
-index 9e584d5e02a21bf0144eaaeef7873409cb092745..7ab1c50c61f2e7d0c788d096b45aa0862ab42b29 100644
+index 9e584d5e02a21bf0144eaaeef7873409cb092745..c0bbbc86b5ff00af623d7791bbe0340d78f5fd88 100644
 --- a/slopkit/p2jb.html
 +++ b/slopkit/p2jb.html
 @@ -414,6 +414,7 @@ const LOG_DEBUG = Q.get("log") === "debug";
@@ -55,45 +55,83 @@ index 9e584d5e02a21bf0144eaaeef7873409cb092745..7ab1c50c61f2e7d0c788d096b45aa086
          { cache: "no-store" });
      if (!response.ok)
          throw new Error("payload fetch failed: HTTP " + response.status);
-@@ -1853,6 +1858,37 @@ window.liveStatus = (function () {
+@@ -1853,6 +1858,75 @@ window.liveStatus = (function () {
  
  // p2jb.js is a classic script: it can only see window properties, so publish
  // the win overlay too (used on its ALREADY-JAILBROKEN path).
++// WKAL: connect() to 127.0.0.1:9021 only succeeds once the ELF loader is
++// actually accepting connections (the bind probe above fires as soon as the
++// port is merely owned).
++async function elfldrAccepting() {
++    let fd = -1;
++    try {
++        const opened = await sys(SYS_SOCKET, 2, 1, 0);
++        if (opened.failed || opened.s32 < 0) return false;
++        fd = opened.s32;
++        track(fd);
++        const connected = await sys(SYS_CONNECT, fd, payloadSockaddrStore.ptr, 0x10);
++        return !connected.failed && connected.s32 === 0;
++    } catch (e) {
++        return false;
++    } finally {
++        if (fd >= 0 && !chainDead) {
++            try {
++                const closed = await sys(SYS_CLOSE, fd);
++                if (!closed.failed && closed.s32 === 0) untrack(fd);
++            } catch (e) { }
++        }
++    }
++}
++
 +// WKAL: send ?autoload=<name> from the shared payloads dir to the running
 +// elfldr and report to the parent page. Used from both success paths -- the
 +// showWin() win handler AND the already-jailbroken probe short-circuit.
-+function startAutoload() {
++// Instead of a fixed wait, poll until elfldr accepts connections:
++// connect() x50 @200 ms ~= 10 s cap.
++async function startAutoload() {
 +    if (!AUTOLOAD) return;
-+    stage("autoloading " + AUTOLOAD + " in 4 s", "ok");
-+    setTimeout(function () {
-+        sendPayloadToElfldr(AUTOLOAD, "../../payloads/")
-+            .then(function (r) {
-+                flushMark("AUTOLOAD-OK",
-+                    "name=" + clean(AUTOLOAD) + "-bytes=" + r.bytes);
-+                stage("autoloaded " + AUTOLOAD + " (" + r.bytes + " bytes)", "ok");
-+                try {
-+                    window.parent.postMessage({ type: "wkal",
-+                        kind: "autoload", ok: true, bytes: r.bytes }, "*");
-+                } catch (e) { }
-+            })
-+            .catch(function (err) {
-+                flushMark("AUTOLOAD-FAILED", "why="
-+                    + clean(err && err.message ? err.message : err));
-+                stage("autoload failed: "
-+                    + (err && err.message ? err.message : err), "bad");
-+                try {
-+                    window.parent.postMessage({ type: "wkal",
-+                        kind: "autoload", ok: false,
-+                        why: String(err && err.message || err) }, "*");
-+                } catch (e) { }
-+            });
-+    }, 4000);
++    preparePayloadSender();
++    flushMark("AUTOLOAD-WAIT", "poll-connect=127.0.0.1:9021-tries=50-interval=200");
++    stage("autoloading " + AUTOLOAD + " -- waiting for the ELF loader on port 9021", "ok");
++    let ready = false;
++    for (let i = 0; i < 50 && !ready; ++i) {
++        ready = await elfldrAccepting();
++        if (!ready) await new Promise(function (resolve) { setTimeout(resolve, 200); });
++    }
++    if (!ready) {
++        flushMark("AUTOLOAD-FAILED", "why=elfldr-not-accepting-on-9021");
++        stage("autoload failed: the ELF loader never accepted on port 9021", "bad");
++        try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false,
++            why: "the ELF loader is not accepting connections on port 9021" }, "*"); } catch (e) { }
++        return;
++    }
++    sendPayloadToElfldr(AUTOLOAD, "../../payloads/")
++        .then(function (r) {
++            flushMark("AUTOLOAD-OK",
++                "name=" + clean(AUTOLOAD) + "-bytes=" + r.bytes);
++            stage("autoloaded " + AUTOLOAD + " (" + r.bytes + " bytes)", "ok");
++            try {
++                window.parent.postMessage({ type: "wkal",
++                    kind: "autoload", ok: true, bytes: r.bytes }, "*");
++            } catch (e) { }
++        })
++        .catch(function (err) {
++            flushMark("AUTOLOAD-FAILED", "why="
++                + clean(err && err.message ? err.message : err));
++            stage("autoload failed: "
++                + (err && err.message ? err.message : err), "bad");
++            try {
++                window.parent.postMessage({ type: "wkal",
++                    kind: "autoload", ok: false,
++                    why: String(err && err.message || err) }, "*");
++            } catch (e) { }
++        });
 +}
 +
  function showWin() {
      if (window.__p2jbWon) return;
      window.__p2jbWon = true;
-@@ -1862,6 +1898,7 @@ function showWin() {
+@@ -1862,6 +1936,7 @@ function showWin() {
      showVerdict(false, "ELF LOADER READY");
      stage("ELF LOADER READY", "ok");
      showPayloadMenu();
@@ -101,7 +139,7 @@ index 9e584d5e02a21bf0144eaaeef7873409cb092745..7ab1c50c61f2e7d0c788d096b45aa086
  }
  window.showWin = showWin;
  
-@@ -1902,7 +1939,7 @@ async function main() {
+@@ -1902,7 +1977,7 @@ async function main() {
          // tree the ELFs live one level up (same place poops.html's sender
          // fetches). Must be set AFTER the adapter eval, which assigns its own
          // defaults, and BEFORE p2jb.js starts (it reads them at call time).
@@ -110,7 +148,7 @@ index 9e584d5e02a21bf0144eaaeef7873409cb092745..7ab1c50c61f2e7d0c788d096b45aa086
          window.P2JB_KEXP_URL = "../payloads/kexp-v0.7-b12c352.bin";
          // From here the adapter owns the hijacked worker: route this page's
          // syscalls through it (per-NR stubs via window.call).
-@@ -2080,6 +2117,7 @@ function lastRunText() {
+@@ -2080,6 +2155,7 @@ function lastRunText() {
          await refreshConsoleNetworkInfo();
          if (await probeExistingElfLoader()) {
              openExistingPayloadMenu();
@@ -119,7 +157,7 @@ index 9e584d5e02a21bf0144eaaeef7873409cb092745..7ab1c50c61f2e7d0c788d096b45aa086
              return;
          }
 diff --git a/slopkit/poops.html b/slopkit/poops.html
-index ed482cc8c8fe3026bfbff1fbccad9ef3f39e1ccf..fedcebbb335c6c2c297de0e933b898cb987287d6 100644
+index ed482cc8c8fe3026bfbff1fbccad9ef3f39e1ccf..a6d702ee1120b4238a247e59e56d11a4c4190fa1 100644
 --- a/slopkit/poops.html
 +++ b/slopkit/poops.html
 @@ -501,6 +501,7 @@ const DEFAULT_ATTEMPTS = TRIGGER === "overflow" ? 96
@@ -189,33 +227,71 @@ index ed482cc8c8fe3026bfbff1fbccad9ef3f39e1ccf..fedcebbb335c6c2c297de0e933b898cb
          { cache: "no-store" });
      if (!response.ok)
          throw new Error("payload fetch failed: HTTP " + response.status);
-@@ -1823,6 +1828,25 @@ function makeContext() {
+@@ -1823,6 +1828,63 @@ function makeContext() {
  
  let cleanupClaimed = false;
  
++// WKAL: connect() to 127.0.0.1:9021 only succeeds once the ELF loader is
++// actually accepting connections (the bind probe above fires as soon as the
++// port is merely owned).
++async function elfldrAccepting() {
++    let fd = -1;
++    try {
++        const opened = await sys(SYS_SOCKET, 2, 1, 0);
++        if (opened.failed || opened.s32 < 0) return false;
++        fd = opened.s32;
++        track(fd);
++        const connected = await sys(SYS_CONNECT, fd, payloadSockaddrStore.ptr, 0x10);
++        return !connected.failed && connected.s32 === 0;
++    } catch (e) {
++        return false;
++    } finally {
++        if (fd >= 0 && !chainDead) {
++            try {
++                const closed = await sys(SYS_CLOSE, fd);
++                if (!closed.failed && closed.s32 === 0) untrack(fd);
++            } catch (e) { }
++        }
++    }
++}
++
 +// WKAL: send ?autoload=<name> from the shared payloads dir to the running
 +// elfldr and report to the parent page. Used from both success paths -- the
 +// end of a fresh ladder AND the already-jailbroken probe short-circuit.
-+function startAutoload() {
++// Instead of a fixed wait, poll until elfldr accepts connections:
++// connect() x50 @200 ms ~= 10 s cap.
++async function startAutoload() {
 +    if (!cfg.autoload) return;
-+    stage("autoloading " + cfg.autoload + " in 4 s", "ok");
-+    setTimeout(function () {
-+        sendPayloadToElfldr(cfg.autoload, "../../payloads/").then(function (r) {
-+            flushMark("AUTOLOAD-OK", "name=" + cfg.autoload + "-bytes=" + r.bytes);
-+            stage("autoloaded " + cfg.autoload + " (" + r.bytes + " bytes)", "ok");
-+            try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: true, bytes: r.bytes }, "*"); } catch (e) { }
-+        }).catch(function (err) {
-+            flushMark("AUTOLOAD-FAILED", "why=" + clean(err && err.message ? err.message : err));
-+            stage("autoload failed: " + (err && err.message ? err.message : err), "bad");
-+            try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false, why: String(err && err.message || err) }, "*"); } catch (e) { }
-+        });
-+    }, 4000);
++    preparePayloadSender();
++    flushMark("AUTOLOAD-WAIT", "poll-connect=127.0.0.1:9021-tries=50-interval=200");
++    stage("autoloading " + cfg.autoload + " -- waiting for the ELF loader on port 9021", "ok");
++    let ready = false;
++    for (let i = 0; i < 50 && !ready; ++i) {
++        ready = await elfldrAccepting();
++        if (!ready) await new Promise(function (resolve) { setTimeout(resolve, 200); });
++    }
++    if (!ready) {
++        flushMark("AUTOLOAD-FAILED", "why=elfldr-not-accepting-on-9021");
++        stage("autoload failed: the ELF loader never accepted on port 9021", "bad");
++        try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false,
++            why: "the ELF loader is not accepting connections on port 9021" }, "*"); } catch (e) { }
++        return;
++    }
++    sendPayloadToElfldr(cfg.autoload, "../../payloads/").then(function (r) {
++        flushMark("AUTOLOAD-OK", "name=" + cfg.autoload + "-bytes=" + r.bytes);
++        stage("autoloaded " + cfg.autoload + " (" + r.bytes + " bytes)", "ok");
++        try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: true, bytes: r.bytes }, "*"); } catch (e) { }
++    }).catch(function (err) {
++        flushMark("AUTOLOAD-FAILED", "why=" + clean(err && err.message ? err.message : err));
++        stage("autoload failed: " + (err && err.message ? err.message : err), "bad");
++        try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false, why: String(err && err.message || err) }, "*"); } catch (e) { }
++    });
 +}
 +
  async function runLadder() {
      const X = ctx;
      LADDER = buildLadder(X, engine);
-@@ -2125,12 +2149,13 @@ async function runLadder() {
+@@ -2125,12 +2187,13 @@ async function runLadder() {
          stage("selected stages complete, nothing triggered, everything put back -- "
              + passed + " PASS", "ok");
  
@@ -235,7 +311,7 @@ index ed482cc8c8fe3026bfbff1fbccad9ef3f39e1ccf..fedcebbb335c6c2c297de0e933b898cb
  
  let bootChainReady = false;
  
-@@ -2575,6 +2600,7 @@ function lastRunText() {
+@@ -2575,6 +2638,7 @@ function lastRunText() {
          await refreshConsoleNetworkInfo();
          if (await probeExistingElfLoader()) {
              openExistingPayloadMenu();

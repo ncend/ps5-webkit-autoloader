@@ -17,7 +17,7 @@
     exploitEl.src = 'about:blank';
   } catch (e) { }
 
-  var MAX_LOG_LINES = 500;
+  var MAX_LOG_LINES = 80;
   var finished = false;
   var chainStarted = false;
   var mirroredLines = 0;
@@ -271,19 +271,16 @@
     for (; mirroredLines < lines.length; mirroredLines++) {
       var line = lines[mirroredLines].trim();
       if (!line) continue;
-      /* Verbose log: mirror every non-empty #scr line so all exploit
-         output (ELF-READ, KEXP-*, p2jb post-jb, etc.) is visible. Use
-         error styling for failures, success for [+] and info otherwise. */
-      var isErr = /FAIL|ERROR|REFUSED|REBOOT|failed|panic|exception/i.test(line)
-        || /^\[-\]/.test(line);
-      // Don't flag a successful summary like "POOPS-COMPLETE ... fail=0" as error
-      if (isErr && /POOPS-COMPLETE/i.test(line) && /fail[^0-9]*0\b/i.test(line)) isErr = false;
-      if (isErr) {
-        uiLog('[log] ' + line, 'error');
-      } else if (/^\[\+\]/.test(line)) {
-        uiLog('[log] ' + line, 'success');
-      } else {
+      /* Curated release log: surface the per-row progress ("> "), the
+         milestone marks (STAGE / POOPS / LATCH / OFFSETS / ...), and
+         anything that looks like a failure — never the full raw stream
+         (that floods the UI and hides the actual result). */
+      if (/^>/.test(line) || /^\[\+\]/.test(line)
+        || /^(STAGE[0-5]|ALLPROC-CHECK|ALIASES-REPAIRED|POOPS-COMPLETE|POOPS-VERDICT|LATCH-HELD|LATCH-READ|OFFSETS-READY|WEBKIT-BASE|MODULE-BASES|SOCKETS|SPAWN|WAKEGATE)/.test(line)) {
         uiLog('[log] ' + line, 'info');
+      } else if (/FAIL|ERROR|REFUSED|REBOOT|failed|panic|exception/i.test(line)
+        || /^\[-\]/.test(line)) {
+        uiLog('[log] ' + line, 'error');
       }
     }
 
@@ -301,16 +298,14 @@
       }
     }
 
-    /* Mirror the summary block (verdict/reboot details) when it changes.
-       Verbose: log every non-empty line, not just failures. */
+    /* Mirror the summary block (verdict/reboot details) when it changes. */
     var summary = doc.getElementById('summary');
     if (summary && summary.textContent && summary.textContent !== lastSummaryText) {
       var summaryLines = summary.textContent.split('\n');
       for (var i = 0; i < summaryLines.length; i++) {
         var sline = summaryLines[i].trim();
-        if (sline) {
-          uiLog('[summary] ' + sline,
-            /FAIL|ERROR|REFUSED|REBOOT|failed|panic/i.test(sline) ? 'error' : 'info');
+        if (sline && /FAIL|ERROR|REFUSED|REBOOT|failed|panic/i.test(sline)) {
+          uiLog('[summary] ' + sline, 'error');
         }
       }
       lastSummaryText = summary.textContent;
@@ -624,13 +619,14 @@
   }
 
   /* Mirror p2jb's ~1 h run from the same-origin exploit iframe into our UI.
-      p2jb renders a pinned progress readout (#livestat, repainted by
-      upstream's 1 Hz ticker) with a per-phase bar and an OVERALL line:
-        "P2JB   total 00:12:03   leak 00:09:41\n<phase text>\n"
-        "[####....] 43.10%   0.31%/min   ETA 00:38:12 ...\n"
-        "OVERALL [####....] 37.4%   step 3/7 (leak)   ~00:41:12 left ..."
-      renderP2jbStats() mirrors it into #p2jbStats; screen/stage/summary/early
-      mirroring works like the poops one, now verbose (every #scr line). */
+     p2jb renders a pinned progress readout (#livestat, repainted by
+     upstream's 1 Hz ticker) with a per-phase bar and an OVERALL line:
+       "P2JB   total 00:12:03   leak 00:09:41\n<phase text>\n"
+       "[####....] 43.10%   0.31%/min   ETA 00:38:12 ...\n"
+       "OVERALL [####....] 37.4%   step 3/7 (leak)   ~00:41:12 left ..."
+     renderP2jbStats() mirrors it into #p2jbStats; screen/stage/summary/early
+     mirroring works like the poops one, with a p2jb-specific curated mark
+     filter (upstream's log=debug screen would otherwise flood us). */
   var p2jbMirroredLines = 0;
   var p2jbLastStageText = '';
   var p2jbLastStageCls = '';
@@ -734,19 +730,14 @@
     for (; p2jbMirroredLines < lines.length; p2jbMirroredLines++) {
       var line = lines[p2jbMirroredLines].trim();
       if (!line) continue;
-      /* Verbose log: mirror every non-empty #scr line. The livestat panel
-         carries structured progress, but the raw stream (ELF-READ, KEXP-*,
-         p2jb post-jb migrate/pin, LEAK-/SPRAY-/TRIPLET/PROGRESS, etc.)
-         is now also visible for diagnostics. */
-      var isErrP2jb = /FAIL|ERROR|REFUSED|REBOOT|failed|panic|exception/i.test(line)
-        || /^\[-\]/.test(line);
-      if (isErrP2jb && /POOPS-COMPLETE/i.test(line) && /fail[^0-9]*0\b/i.test(line)) isErrP2jb = false;
-      if (isErrP2jb) {
-        uiLog('[log] ' + line, 'error');
-      } else if (/^\[\+\]/.test(line)) {
-        uiLog('[log] ' + line, 'success');
-      } else {
+      /* Curated release log: milestone marks and failures only. The verbose
+         debug stream (LEAK-/SPRAY-/TRIPLET/PROGRESS every 15 s, ...) stays
+         off our log — the livestat bar above carries the live progress. */
+      if (/^(POOPS-BOOT|OFFSETS-READY|TRIGGER-ARMED|TRIGGER-FIRED|LATCH-SET|LATCH-ESCALATE|LATCH-CLEAR|LATCH-HELD|LATCH-RELEASED|POOPS-LATCHED|POOPS-STALLED|BOOT-STALLED|CHAIN-DEAD|STAGE5-DONE|POOPS-COMPLETE|POOPS-FAILED|ELFLDR-MENU-VISIBLE|ELFLDR-UP|ELF-SENT|ELF-SEND-FAILED|ELF-SENDER-BLOCKED|KEXP-JOIN|KEXP-JOIN-PRE|KEXP-SPAWN|KEXP-ELF|AUTOLOAD-OK|AUTOLOAD-FAILED)/.test(line)) {
         uiLog('[log] ' + line, 'info');
+      } else if (/FAIL|ERROR|REFUSED|REBOOT|failed|panic|exception/i.test(line)
+        || /^\[-\]/.test(line)) {
+        uiLog('[log] ' + line, 'error');
       }
     }
 
@@ -786,16 +777,14 @@
       }
     }
 
-    /* Mirror the summary block (verdict details) when it changes.
-       Verbose: log every non-empty line, not just failures. */
+    /* Mirror the summary block (verdict details) when it changes. */
     var summary = doc.getElementById('summary');
     if (summary && summary.textContent && summary.textContent !== p2jbLastSummaryText) {
       var summaryLines = summary.textContent.split('\n');
       for (var i = 0; i < summaryLines.length; i++) {
         var sline = summaryLines[i].trim();
-        if (sline) {
-          uiLog('[summary] ' + sline,
-            /FAIL|ERROR|REFUSED|REBOOT|failed|panic/i.test(sline) ? 'error' : 'info');
+        if (sline && /FAIL|ERROR|REFUSED|REBOOT|failed|panic/i.test(sline)) {
+          uiLog('[summary] ' + sline, 'error');
         }
       }
       p2jbLastSummaryText = summary.textContent;

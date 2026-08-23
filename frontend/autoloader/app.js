@@ -27,6 +27,7 @@
   var earlyLinesLogged = 0;
   var lastFrameUrl = '';
   var repairCount = 0;
+  var mirrorTimer = 0;
 
   /* The slopkit chains (poops 7.00-12.00, p2jb 12.02-12.70) keep a one-shot
      latch and their "stopped at …" marker in sessionStorage under shared
@@ -147,6 +148,16 @@
   function onAutoloadResult(data) {
     if (finished) return;
     finished = true;
+    /* Success is terminal — stop mirroring so the page stays idle while the
+       payload runs alongside it. On failure keep streaming the iframe's
+       output into the log for diagnostics. */
+    if (data.ok && mirrorTimer) {
+      clearInterval(mirrorTimer);
+      mirrorTimer = 0;
+    }
+    /* p2jb only: retire the stats panel (green 100% since the win) and
+       restore the classic full-height log; no-op for the other chains. */
+    collapseP2jbStats();
     if (data.ok) {
       uiLog('Payload loaded (' + data.bytes + ' bytes sent to elfldr).', 'success');
       updateProgress(100, 'Autoload finished.');
@@ -372,17 +383,250 @@
     }
   }
 
+  /* Native rendering of p2jb's pinned #livestat readout. Upstream paints an
+     ASCII status block once per second:
+       "P2JB   total 00:12:03   leak 00:09:41\n<status text>\n"
+       "[####....] 43.10%   0.31%/min   ETA 00:38:12 ...\n"
+       "OVERALL [####....] 37.4%   step 3/7 (leak)   ~00:41:12 left ..."
+     We parse it into the #p2jbStats panel (styled in style.css): phase +
+     OVERALL bars, clocks, rate/ETA, worker bars, and detail counters. Every
+     write is guarded — no-op DOM writes would only cost shared thread time. */
+  var p2jbStats = null;
+
+  function p2jbStatsDom() {
+    if (!p2jbStats) {
+      var root = document.getElementById('p2jbStats');
+      if (!root) return null;
+      p2jbStats = {
+        root: root,
+        stepChip: document.getElementById('p2jbStepChip'),
+        clocks: document.getElementById('p2jbClocks'),
+        status: document.getElementById('p2jbStatus'),
+        detail: document.getElementById('p2jbDetail'),
+        groupsBox: document.getElementById('p2jbGroups'),
+        cells: null,
+        phaseName: document.getElementById('p2jbPhaseName'),
+        phasePct: document.getElementById('p2jbPhasePct'),
+        phaseFill: document.getElementById('p2jbPhaseFill'),
+        phaseMeta: document.getElementById('p2jbPhaseMeta'),
+        overallPct: document.getElementById('p2jbOverallPct'),
+        overallFill: document.getElementById('p2jbOverallFill'),
+        overallMeta: document.getElementById('p2jbOverallMeta')
+      };
+    }
+    return p2jbStats.root ? p2jbStats : null;
+  }
+
+  function statText(el, v) {
+    if (el && el.textContent !== v) el.textContent = v;
+  }
+
+  function statFill(el, frac) {
+    /* Quantize to 0.1% (upstream's reporting granularity): stable strings
+       for the change-guard, no float noise like scaleX(0.4379999...). */
+    var t = 'scaleX(' + Math.round(Math.max(0, Math.min(1, frac)) * 1000) / 1000 + ')';
+    if (el.__transform !== t) {
+      el.__transform = t;
+      el.style.transform = t;
+    }
+  }
+
+  /* Parse the #livestat text block. Layout (upstream render()):
+     line 0        "P2JB   total HH:MM:SS   <phase> HH:MM:SS"
+     lines 1..n    status text (multi-line; the leak feed adds byte counters
+                   and a "per-core: 12.3% 45.6% ..." worker line)
+     next          "[####....] 43.10% ..."   <- CURRENT phase progress
+     last          "OVERALL [####....] 37.4% step i/N (phase) ~left"  */
+  function parseLivestat(text) {
+    var out = {};
+    var lines = text.split('\n');
+    var head = /^P2JB\s+total\s+(\d{2}:\d{2}:\d{2})\s+(\S+)\s+(\d{2}:\d{2}:\d{2})/
+      .exec(lines[0] || '');
+    if (head) {
+      out.total = head[1];
+      out.phaseKey = head[2];
+      out.phaseTime = head[3];
+    }
+    for (var i = 1; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      if (/^OVERALL\s+\[[#.]*\]/.test(line)) {
+        var mo = /OVERALL\s+\[[#.]*\]\s+(\d+(?:\.\d+)?)%\s+step\s+(\d+)\/(\d+)\s+\((\w+)\)\s+~(\d{2}:\d{2}:\d{2})\s+left(?:\s+done\s+~(\d{2}:\d{2}))?/.exec(line);
+        if (mo) {
+          out.overallPct = parseFloat(mo[1]);
+          out.stepNum = parseInt(mo[2], 10);
+          out.stepDen = parseInt(mo[3], 10);
+          out.stepKey = mo[4];
+          out.left = mo[5];
+          out.doneClockOverall = mo[6] || '';
+        }
+      } else if (/^\[[#.]*\]\s+\d/.test(line)) {
+        var mp = /\[[#.]*\]\s+(\d+(?:\.\d+)?)%(?:\s+(\d+(?:\.\d+)?)%\/min)?(?:\s+ETA\s+(\S+))?(?:\s+done\s+~(\S+))?(?:\s+\(no progress for (\d+)s\))?/.exec(line);
+        if (mp) {
+          out.phasePct = mp[1];
+          out.ratePerMin = mp[2];
+          out.eta = mp[3];
+          out.doneClockPhase = mp[4];
+          out.stallSecs = mp[5];
+        }
+      } else if (out.status === undefined) {
+        out.status = line;
+      } else {
+        /* A "label: v v v ..." line of >= 2 percentages is a per-worker
+           track (upstream's leak-feed "per-core:" line); anything else is
+           detail text. */
+        var mg = /^([A-Za-z][\w-]*)\s*:\s*(.+)$/.exec(line);
+        if (mg) {
+          var pcts = [];
+          var gre = /(\d{1,3}(?:\.\d+)?)%/g;
+          var gm = gre.exec(mg[2]);
+          while (gm !== null) {
+            pcts.push(parseFloat(gm[1]));
+            gm = gre.exec(mg[2]);
+          }
+          if (pcts.length >= 2) {
+            out.groups = pcts.slice(0, 24);
+            continue;
+          }
+        }
+        (out.details = out.details || []).push(line);
+      }
+    }
+    return out;
+  }
+
+  function renderP2jbStats(text) {
+    var d = p2jbStatsDom();
+    if (!d) return;
+    var s = parseLivestat(text);
+
+    /* First real data: reveal the panel and shrink the log to the top half
+       (body.p2jb-stats in style.css). */
+    if (d.root.hidden) {
+      d.root.hidden = false;
+      document.body.classList.add('p2jb-stats');
+    }
+
+    statText(d.clocks, 'total ' + (s.total || '--:--:--')
+      + (s.phaseKey ? ' · ' + s.phaseKey + ' ' + s.phaseTime : ''));
+    statText(d.stepChip, 'STEP ' + (s.stepNum || '-') + '/' + (s.stepDen || 7));
+    statText(d.status, s.status || '…');
+    statText(d.phaseName, (s.phaseKey || 'phase').toUpperCase());
+    statText(d.phasePct, s.phasePct !== undefined ? s.phasePct + '%' : '–');
+
+    var meta = [];
+    if (s.ratePerMin) meta.push(s.ratePerMin + '%/min');
+    if (s.eta) meta.push('ETA ' + s.eta);
+    if (s.doneClockPhase) meta.push('done ~' + s.doneClockPhase);
+    if (s.stallSecs) meta.push('no progress for ' + s.stallSecs + 's');
+    var metaCls = 'stats-meta' + (s.stallSecs ? ' stalled' : '');
+    statText(d.phaseMeta, meta.join(' · ') || 'ETA --:--:--');
+    if (d.phaseMeta.className !== metaCls) d.phaseMeta.className = metaCls;
+
+    statText(d.overallPct, s.overallPct !== undefined
+      ? s.overallPct.toFixed(1) + '%' : '–');
+    var ometa = [];
+    if (s.left) ometa.push('~' + s.left + ' left');
+    if (s.doneClockOverall) ometa.push('done ~' + s.doneClockOverall);
+    statText(d.overallMeta, ometa.join(' · ') || '– left');
+
+    if (s.phasePct !== undefined) statFill(d.phaseFill, parseFloat(s.phasePct) / 100);
+    if (s.overallPct !== undefined) statFill(d.overallFill, s.overallPct / 100);
+
+    renderP2jbDetail(d, s.details);
+    renderP2jbGroups(d, s.groups);
+
+    if (s.stepKey && s.stepNum !== undefined) {
+      var phaseStep = s.stepNum + '/' + (s.stepDen || 7) + ' ' + s.stepKey;
+      if (phaseStep !== p2jbLastPhaseStep) {
+        p2jbLastPhaseStep = phaseStep;
+        uiLog('[p2jb] phase ' + s.stepKey + ' (step ' + s.stepNum
+          + '/' + (s.stepDen || 7) + ') — overall ' + (s.overallPct !== undefined
+            ? s.overallPct.toFixed(1) + '%' : '–')
+          + (s.left ? ', ~' + s.left + ' left' : ''), 'info');
+      }
+    }
+  }
+
+  function renderP2jbDetail(d, details) {
+    var text = details && details.length ? details.join('\n') : '';
+    if (!text) {
+      if (!d.detail.hidden) d.detail.hidden = true;
+      return;
+    }
+    if (d.detail.hidden) d.detail.hidden = false;
+    statText(d.detail, text);
+  }
+
+  /* Per-worker strip from upstream's leak-feed "per-core:" line: one bar
+     per worker with its live percentage inside. Cells are rebuilt only when
+     the worker count changes; every write is change-guarded. */
+  function renderP2jbGroups(d, groups) {
+    if (!groups || !groups.length) {
+      d.cells = null;
+      if (!d.groupsBox.hidden) d.groupsBox.hidden = true;
+      return;
+    }
+    if (d.groupsBox.hidden) d.groupsBox.hidden = false;
+    if (!d.cells || d.cells.length !== groups.length) {
+      d.groupsBox.textContent = '';
+      d.cells = [];
+      for (var i = 0; i < groups.length; i++) {
+        var cell = document.createElement('span');
+        cell.className = 'group';
+        var track = document.createElement('span');
+        track.className = 'gtrack';
+        var fill = document.createElement('span');
+        fill.className = 'stats-fill';
+        var pct = document.createElement('span');
+        pct.className = 'gpct';
+        track.appendChild(fill);
+        track.appendChild(pct);
+        cell.appendChild(track);
+        d.groupsBox.appendChild(cell);
+        d.cells.push({ fill: fill, pct: pct });
+      }
+    }
+    for (var j = 0; j < d.cells.length; j++) {
+      statFill(d.cells[j].fill, (groups[j] || 0) / 100);
+      statText(d.cells[j].pct, (groups[j] || 0).toFixed(1) + '%');
+    }
+  }
+
+  /* Win: pin the panel green at 100% until the autoload result lands
+     (~4 s later), then collapseP2jbStats() restores the classic layout. */
+  function completeP2jbStats() {
+    var d = p2jbStatsDom();
+    if (!d) return;
+    document.body.classList.add('p2jb-done');
+    d.status.className = 'stats-status';
+    statText(d.status, 'ELF LOADER READY');
+    statText(d.phaseName, 'COMPLETE');
+    statText(d.phasePct, '100%');
+    statText(d.overallPct, '100%');
+    statText(d.phaseMeta, '');
+    statText(d.overallMeta, 'elfldr ready — sending payload…');
+    statFill(d.phaseFill, 1);
+    statFill(d.overallFill, 1);
+  }
+
+  function collapseP2jbStats() {
+    document.body.classList.remove('p2jb-stats');
+    document.body.classList.remove('p2jb-done');
+    if (p2jbStats && p2jbStats.root && !p2jbStats.root.hidden) {
+      p2jbStats.root.hidden = true;
+    }
+  }
+
   /* Mirror p2jb's ~1 h run from the same-origin exploit iframe into our UI.
      p2jb renders a pinned progress readout (#livestat, repainted by
      upstream's 1 Hz ticker) with a per-phase bar and an OVERALL line:
        "P2JB   total 00:12:03   leak 00:09:41\n<phase text>\n"
        "[####....] 43.10%   0.31%/min   ETA 00:38:12 ...\n"
        "OVERALL [####....] 37.4%   step 3/7 (leak)   ~00:41:12 left ..."
-     Parse it on every poll to drive our own progress bar/label live across
-     the whole run WITHOUT flooding the log — only phase changes are logged.
-     Screen/stage/summary/early mirroring works like the poops one, with a
-     p2jb-specific curated mark filter (upstream's log=debug screen would
-     otherwise flood us over the hour). */
+     renderP2jbStats() mirrors it into #p2jbStats; screen/stage/summary/early
+     mirroring works like the poops one, with a p2jb-specific curated mark
+     filter (upstream's log=debug screen would otherwise flood us). */
   var p2jbMirroredLines = 0;
   var p2jbLastStageText = '';
   var p2jbLastStageCls = '';
@@ -466,28 +710,14 @@
       return;
     }
 
-    /* Live progress: parse the OVERALL line of #livestat into our bar/label.
-       The element only exists once the first real phase starts; before that
-       the stage text carries the status. Upstream's 1 Hz ticker keeps
-       repainting #livestat even after the win, so stop once the chain is
-       complete and let the stage/autoload messages own the label again. */
+    /* Live progress: mirror #livestat into our native stats panel. The
+       element only exists once the first real phase starts; before that the
+       stage text carries the status. Upstream's 1 Hz ticker keeps repainting
+       #livestat even after the win, so stop once the chain is complete and
+       let the stage/autoload messages own the UI again. */
     var live = doc.getElementById('livestat');
     if (live && live.textContent && !p2jbComplete) {
-      var mOverall = /OVERALL \[[#.]*\]\s+(\d+(?:\.\d+)?)%\s+step (\d+)\/(\d+)\s+\(([a-z]+)\)/.exec(live.textContent);
-      var mLeft = /~(\d{2}:\d{2}:\d{2}) left/.exec(live.textContent);
-      if (mOverall) {
-        progressBar.style.transform = 'scaleX(' +
-          Math.min(100, parseFloat(mOverall[1])) / 100 + ')';
-        progressLabel.textContent = 'p2jb ' + mOverall[4] + ' — overall '
-          + mOverall[1] + '%' + (mLeft ? ' · ~' + mLeft[1] + ' left' : '');
-        var phaseStep = mOverall[2] + '/' + mOverall[3] + ' ' + mOverall[4];
-        if (phaseStep !== p2jbLastPhaseStep) {
-          p2jbLastPhaseStep = phaseStep;
-          uiLog('[p2jb] phase ' + mOverall[4] + ' (step ' + mOverall[2]
-            + '/' + mOverall[3] + ') — overall ' + mOverall[1] + '%'
-            + (mLeft ? ', ~' + mLeft[1] + ' left' : ''), 'info');
-        }
-      }
+      renderP2jbStats(live.textContent);
     }
 
     var lines = scr.textContent.split('\n');
@@ -515,10 +745,12 @@
     if (stage && stage.textContent !== p2jbLastStageText) {
       p2jbLastStageText = stage.textContent;
       p2jbLastStageCls = stage.className || '';
-      /* The livestat label wins while the run is in progress; before it
-         exists (early boot) and after completion (win/autoload messages)
-         mirror the stage text instead. */
-      if (!live || p2jbComplete) progressLabel.textContent = p2jbLastStageText;
+      /* The panel owns progress while it is up (the slim bar is hidden via
+         body.p2jb-stats); before livestat exists (early boot) and after the
+         collapse, mirror the stage text into our label instead. */
+      if (!live || p2jbComplete) {
+        progressLabel.textContent = p2jbLastStageText;
+      }
       /* showWin() fires on every win path (KEXP-JOIN detection and the
          already-jailbroken shortcut) — latch completion here so the
          autoload flow owns the UI from this point on. */
@@ -526,9 +758,18 @@
         p2jbComplete = true;
         progressBar.style.transform = 'scaleX(1)';
         uiLog('[p2jb] exploit complete — elfldr ready.', 'success');
+        /* Pin the panel green at 100% until the autoload result lands, then
+           onAutoloadResult collapses back to the classic full-height log.
+           The iframe stays loaded — it holds the ROP workers/threads. */
+        completeP2jbStats();
       }
       if (p2jbLastStageCls.indexOf('bad') !== -1) {
         uiLog('[stage] ' + p2jbLastStageText, 'error');
+        /* Tint the panel status red so a mid-run failure is visible there
+           too (the panel stays up for diagnostics on failures). */
+        if (p2jbStats && p2jbStats.status) {
+          p2jbStats.status.className = 'stats-status bad';
+        }
       } else if (p2jbLastStageCls.indexOf('ok') !== -1) {
         uiLog('[stage] ' + p2jbLastStageText, 'success');
       } else {
@@ -595,7 +836,6 @@
        are already handled by the URL-diff branch in mirrorSlopkit() plus
        the shrink re-anchor (fresh documents start with an empty screen,
        so their lines stream normally). */
-    setInterval(mirrorExploit, 500);
 
     var picked = pickExploit();
     if (!picked) {
@@ -606,6 +846,11 @@
     EXPLOIT_URL = picked === 'umtx2' ? UMTX2_URL
       : picked === 'p2jb' ? P2JB_URL
         : POOPS_URL;
+
+    /* p2jb's own ticker repaints at exactly 1 Hz — polling any faster only
+       burns shared-thread time; the fast chains keep 500 ms for snappier
+       logs. */
+    mirrorTimer = setInterval(mirrorExploit, picked === 'p2jb' ? 1000 : 500);
 
     /* umtx2 auto-runs its chain on load when sessionStorage 'on_load_autorun'
        is set (it clears it itself once main() starts); clear it on the

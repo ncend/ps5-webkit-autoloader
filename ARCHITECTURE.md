@@ -41,8 +41,8 @@ instead of the unified-autoloader — so this flow installs the homescreen app.
 ## Frontend (`frontend/autoloader/`)
 
 - A splash screen, a log terminal and a progress bar. The exploit runs in a **hidden**
-  same-origin iframe. On load, `app.js` picks the chain from the firmware in the
-  user-agent (`PlayStation 5/x.xx`): **umtx2** for 1.00–5.50, **poops** for 7.00–12.00,
+  same-origin iframe. On load, `app.js` picks the chain from the firmware in
+  the user-agent (`PlayStation 5/x.xx`): **umtx2** for 1.00–5.50, **poops** for 7.00–12.00,
   and **p2jb** for 12.02–12.70.
 - A `FORCE_EXPLOIT` build-time override (`auto | umtx2 | poops | p2jb`; or a `?force=`
   query) bypasses the table so a specific chain can be exercised on any firmware; the
@@ -55,10 +55,11 @@ instead of the unified-autoloader — so this flow installs the homescreen app.
   `slopkit-poops:*` keys used by both chains) so every launch restarts the full chain.
 - `app.js` mirrors each chain's screen/stage/early/summary into the log (errors, stage changes
   and summary verdicts) and receives the `?autoload` result via `postMessage`. For p2jb it
-  additionally parses the exploit's pinned `#livestat` readout (upstream repaints it every
-  second with a per-phase bar and an OVERALL percentage + ETA) into our own progress bar and
-  label — live feedback across the ~1 h run without flooding the log; only phase transitions
-  and milestone marks are logged.
+  additionally parses the exploit's pinned `#livestat` readout (upstream repaints it at 1 Hz)
+  and renders a dedicated statistics panel (`#p2jbStats`) below the log with phase and overall
+  progress bars, clocks, and live worker metrics. While visible, the panel replaces the slim
+  progress bar and collapses once the payload is sent. All DOM updates are change-guarded and
+  polling synchronizes with upstream's 1 Hz ticker so UI updates do not contend with exploit execution.
 
 `payload.elf` is a virtual name: the PC host serves the installer ELF there, the homescreen app
 serves the real unified-autoloader. All exploits autoload the same `payload.elf`. umtx2 (FW

@@ -54,7 +54,8 @@ def include_in_zip(rel):
     if "/.git/" in rel or rel.endswith("/.git"):
         return False
     if rel.startswith("slopkit/payloads/"):
-        return rel.endswith("kexp_2026_05_25.bin")
+        name = os.path.basename(rel)
+        return name.startswith("kexp") and name.endswith(".bin")
     if rel == "slopkit/readme.png":
         return False
     if rel.endswith(".sha256"):

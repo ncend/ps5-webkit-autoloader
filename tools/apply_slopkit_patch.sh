@@ -74,12 +74,17 @@ if ! grep -q 'sendPayloadToElfldr(cfg.autoload, "../../payloads/"' slopkit/poops
     || ! grep -q '"url=../../shared/" + name' slopkit/poops.js \
     || ! grep -q 'const AUTOLOAD = Q.get("autoload")' slopkit/p2jb.html \
     || ! grep -q 'sendPayloadToElfldr(AUTOLOAD, "../../payloads/")' slopkit/p2jb.html \
-    || ! grep -q '"../../shared/elfldr-ps5.elf"' slopkit/p2jb.html; then
+    || ! grep -q '"../../shared/elfldr-ps5.elf"' slopkit/p2jb.html \
+    || ! grep -q 'function startAutoload' slopkit/poops.html \
+    || ! grep -q 'startAutoload();' slopkit/poops.html \
+    || ! grep -q 'function startAutoload' slopkit/p2jb.html \
+    || ! grep -q 'startAutoload();' slopkit/p2jb.html; then
     echo "Error: slopkit patch verification FAILED — integration markers missing."
     echo "patches/slopkit-autoload.patch is incomplete or out of date."
     echo "Regenerate it from the pristine submodule:"
     echo "  git -C $SOURCE diff > $PATCH"
     exit 1
 fi
-echo "slopkit: patch verification OK (autoload block, exactQuery relaxation,"
-echo "         hidden payload.elf tile, shared elfldr on poops + p2jb)."
+echo "slopkit: patch verification OK (autoload block + probe-path autoload,"
+echo "         exactQuery relaxation, hidden payload.elf tile, shared elfldr"
+echo "         on poops + p2jb)."

@@ -71,7 +71,8 @@ def include_in_registry(path):
     if path == "/VERSION":
         return False
     if "/slopkit/payloads/" in path:
-        return path.endswith("kexp_2026_05_25.bin")
+        name = os.path.basename(path)
+        return name.startswith("kexp") and name.endswith(".bin")
     if "/slopkit/readme.png" in path:
         return False
     if path.endswith(".sha256"):

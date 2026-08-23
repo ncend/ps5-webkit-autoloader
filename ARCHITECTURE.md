@@ -135,7 +135,9 @@ dev server.
 
 `slopkit` is a pinned, **pristine** submodule. The build copies it to the gitignored
 `frontend/autoloader/slopkit/` and applies `patches/slopkit-autoload.patch` there
-(`tools/apply_slopkit_patch.sh`, run automatically by the Makefile).
+(`tools/apply_slopkit_patch.sh`, run automatically by the Makefile). Its bundled `payloads/`
+dir is embedded as-is apart from the unused `.elf` files it ships — the registry/host filters
+keep only `kexp*.bin` from it, so bumping the submodule never requires script changes.
 
 The patch (in `slopkit/slopkit/poops.html`, `poops.js` and `p2jb.html`):
 
@@ -150,9 +152,7 @@ The patch (in `slopkit/slopkit/poops.html`, `poops.js` and `p2jb.html`):
   poops from the end of its ladder, p2jb from its `showWin()` win handler after a 4 s wait for
   elfldr to bind port 9021.
 - Loads the **shared elfldr** instead of the bundled copies: poops fetches
-  `../../shared/elfldr-ps5.elf` in `poops.js` (the kexp shellcode stays slopkit's own — it is
-  firmware-specific), and p2jb's `P2JB_ELF_URL` points at the same file (the kexp maps that blob
-  into the kernel itself).
+  `../../shared/elfldr-ps5.elf` in `poops.js`, and p2jb's `P2JB_ELF_URL` points at the same file.
 
 To update slopkit: `git -C third_party/slopkit fetch && git -C third_party/slopkit checkout <commit>`,
 re-run the script, and regenerate the patch if it no longer applies
@@ -194,8 +194,7 @@ Both slopkit chains boot the **shared** elfldr, served at `/app/<version>/shared
 (staged from `frontend/autoloader/shared/`). `tools/download_deps.sh` fetches it from the pinned
 `itsPLK/ps5-elfldr` release (tag `ELFLDR_TAG`), sha256-verifies it, and caches the digest in a
 `.sha256` sidecar so offline rebuilds work. umtx2 (FW 1.00–5.50) boots its **own** elfldr from
-the umtx2 submodule instead, matching stock umtx2 behavior. Future shared chain binaries
-(e.g. a kexp) can live in the versioned `/app/<version>/shared/` dir too.
+the umtx2 submodule instead, matching stock umtx2 behavior.
 
 ## Payload dependency
 

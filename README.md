@@ -6,6 +6,12 @@
 <p align="center">Automatically loads the WebKit exploit and your elf payloads.<br>Supports firmwares <b>1.00&ndash;5.50</b> and <b>7.00&ndash;12.70</b>.</p>
 
 <p align="center">
+  <a href=".github/screenshots/webkit_autoloader.jpeg"><img src=".github/screenshots/webkit_autoloader.jpeg" width="260" alt="WebKit Autoloader - exploit running" /></a>
+  <a href=".github/screenshots/webkit_autoloader_installer.jpeg"><img src=".github/screenshots/webkit_autoloader_installer.jpeg" width="260" alt="Installer" /></a>
+  <a href=".github/screenshots/p2jb_ui.jpeg"><img src=".github/screenshots/p2jb_ui.jpeg" width="260" alt="P2JB live progress" /></a>
+</p>
+
+<p align="center">
     <b>Other Autoloaders:</b><br>
     <a href="https://github.com/itsPLK/ps5-y2jb-autoloader">Y2JB</a> |
     <a href="https://github.com/itsPLK/ps5-bdjb-autoloader">BD-JB</a> |

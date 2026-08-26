@@ -12,10 +12,10 @@ index 3ee132b..bcf6355 100644
          window.onload = function () {
              let autoload = sessionStorage.getItem(SESSIONSTORE_ON_LOAD_AUTORUN_KEY);
 diff --git a/main.js b/main.js
-index 9cbb675..a025185 100644
+index 9cbb675..5f4db5f 100644
 --- a/main.js
 +++ b/main.js
-@@ -500,24 +500,21 @@ async function main(userlandRW, wkOnly = false) {
+@@ -500,24 +500,26 @@ async function main(userlandRW, wkOnly = false) {
      let is_elfldr_running = await probe_sb_elfldr();
      await log("is elfldr running: " + is_elfldr_running, LogLevel.INFO);
      if (wkOnly && !is_elfldr_running) {
@@ -32,8 +32,13 @@ index 9cbb675..a025185 100644
 -        if (res) {
 -            wkOnly = true;
 -        }
-+        // WKAL: always run the full chain in the autoloader, never skip it.
-+        await log("elfldr is already running, continuing with the full chain", LogLevel.INFO);
++        // WKAL: elfldr already running means the console was jailbroken
++        // earlier this session. Re-running the kernel exploit on an
++        // already-patched kernel risks panics, so behave like stock's
++        // sender-only mode: skip the kernel stage and go straight to
++        // sending payloads to the running ELF loader.
++        wkOnly = true;
++        await log("elfldr already running - skipping kernel exploit, switching to sender-only mode", LogLevel.INFO);
      }
  
      populatePayloadsPage(wkOnly);
@@ -47,7 +52,7 @@ index 9cbb675..a025185 100644
          if (!response.ok) {
              throw new Error(`Failed to fetch the binary file. Status: ${response.status}`);
          }
-@@ -849,9 +846,9 @@ async function main(userlandRW, wkOnly = false) {
+@@ -849,9 +851,9 @@ async function main(userlandRW, wkOnly = false) {
              return res;
          }
  
@@ -59,7 +64,7 @@ index 9cbb675..a025185 100644
                  await parse_elf_store(total_sz);
                  await execute_elf_store();
                  return await wait_for_elf_to_exit();
-@@ -1182,6 +1179,48 @@ async function main(userlandRW, wkOnly = false) {
+@@ -1182,6 +1184,48 @@ async function main(userlandRW, wkOnly = false) {
      await new Promise(resolve => setTimeout(resolve, 300));
      await switchPage("payloads-view");
  
@@ -108,7 +113,7 @@ index 9cbb675..a025185 100644
  
      while (true) {
  
-@@ -1198,7 +1237,7 @@ async function main(userlandRW, wkOnly = false) {
+@@ -1198,7 +1242,7 @@ async function main(userlandRW, wkOnly = false) {
                      }
                  } else {
                      updateToastMessage(toast, `${payload_info.displayTitle}: Fetching...`);
@@ -117,7 +122,7 @@ index 9cbb675..a025185 100644
  
                      if (!payload_info.toPort) {
                          if (wkOnly) {
-@@ -1220,11 +1259,19 @@ async function main(userlandRW, wkOnly = false) {
+@@ -1220,11 +1264,19 @@ async function main(userlandRW, wkOnly = false) {
                          updateToastMessage(toast, `${payload_info.displayTitle}: Sending to port ${payload_info.toPort}...`);
                          await send_buffer_to_port(elf_store, total_sz, payload_info.toPort);
                          updateToastMessage(toast, `${payload_info.displayTitle}: Sent to port ${payload_info.toPort}`);

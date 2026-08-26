@@ -63,12 +63,12 @@ index 9cbb675..fc07bce 100644
      await new Promise(resolve => setTimeout(resolve, 300));
      await switchPage("payloads-view");
  
-+    // WKAL autoload: if the page was opened with ?autoload=<name>, wait 4 s for
++    // WKAL autoload: if the page was opened with ?autoload=<name>, wait 2 s for
 +    // elfldr to bind port 9021, then dispatch a synthetic payload request through
 +    // the main loop — exactly as if the user pressed the corresponding button.
 +    var wkalAutoloadName = new URLSearchParams(location.search).get("autoload") || sessionStorage.getItem("wkal_autoload");
 +    if (wkalAutoloadName && is_elfldr_running) {
-+        await log("autoload: waiting 4 s for elfldr to bind 9021...", LogLevel.LOG);
++        await log("autoload: waiting 2 s for elfldr to bind 9021...", LogLevel.LOG);
 +        setTimeout(function () {
 +            window.dispatchEvent(new CustomEvent(MAINLOOP_EXECUTE_PAYLOAD_REQUEST, {
 +                detail: {
@@ -79,7 +79,7 @@ index 9cbb675..fc07bce 100644
 +                    wkalAutoload: true
 +                }
 +            }));
-+        }, 4000);
++        }, 2000);
 +    } else if (wkalAutoloadName && !is_elfldr_running) {
 +        await log("autoload failed: elfldr did not load", LogLevel.ERROR);
 +        try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false, why: "elfldr did not load" }, "*"); } catch (e) { }

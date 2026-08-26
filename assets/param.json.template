@@ -1,11 +1,21 @@
 {
     "titleId": "WKAL00001",
     "applicationCategoryType": 65536,
+    "applicationDrmType": "free",
+    "attribute": 1,
+    "attribute2": 0,
+    "attribute3": 4,
+    "contentBadgeType": 2,
     "deeplinkUri": "http://127.0.0.1:18181/app/index.html",
+    "displayLocation": 188,
     "localizedParameters": {
         "defaultLanguage": "en-US",
         "en-US": {
             "titleName": "WebKit Autoloader v[[VERSION_PLACEHOLDER]]"
         }
-    }
+    },
+    "userDefinedParam1": 1,
+    "userDefinedParam2": 0,
+    "userDefinedParam3": 0,
+    "userDefinedParam4": 0
 }

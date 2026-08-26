@@ -12,7 +12,7 @@ index 3ee132b..bcf6355 100644
          window.onload = function () {
              let autoload = sessionStorage.getItem(SESSIONSTORE_ON_LOAD_AUTORUN_KEY);
 diff --git a/main.js b/main.js
-index 9cbb675..fc07bce 100644
+index 9cbb675..a025185 100644
 --- a/main.js
 +++ b/main.js
 @@ -500,24 +500,21 @@ async function main(userlandRW, wkOnly = false) {
@@ -59,17 +59,38 @@ index 9cbb675..fc07bce 100644
                  await parse_elf_store(total_sz);
                  await execute_elf_store();
                  return await wait_for_elf_to_exit();
-@@ -1182,6 +1179,27 @@ async function main(userlandRW, wkOnly = false) {
+@@ -1182,6 +1179,48 @@ async function main(userlandRW, wkOnly = false) {
      await new Promise(resolve => setTimeout(resolve, 300));
      await switchPage("payloads-view");
  
-+    // WKAL autoload: if the page was opened with ?autoload=<name>, wait 2 s for
-+    // elfldr to bind port 9021, then dispatch a synthetic payload request through
-+    // the main loop — exactly as if the user pressed the corresponding button.
++    // WKAL: connect() to 127.0.0.1:9021 only succeeds once the ELF loader is
++    // actually accepting connections (not merely bound). Reuses the same
++    // sockaddr scratch buffer as send_buffer_to_port.
++    async function wkal_elfldr_accepting() {
++        let sock = (await chain.syscall(SYS_SOCKET, AF_INET, SOCK_STREAM, 0)).low << 0;
++        if (sock <= 0) return false;
++        build_addr(p, send_buffer_to_port.sock_addr_store, AF_INET, htons(9021), 0x0100007F);
++        let res = (await chain.syscall(SYS_CONNECT, sock, send_buffer_to_port.sock_addr_store, 0x10)).low << 0;
++        await chain.syscall(SYS_CLOSE, sock);
++        return res === 0;
++    }
++
++    // WKAL autoload: if the page was opened with ?autoload=<name>, poll until
++    // elfldr accepts connections on port 9021 (connect() x50 @200 ms ~= 10 s
++    // cap) instead of a fixed wait, then dispatch a synthetic payload request
++    // through the main loop — exactly as if the user pressed the button.
 +    var wkalAutoloadName = new URLSearchParams(location.search).get("autoload") || sessionStorage.getItem("wkal_autoload");
 +    if (wkalAutoloadName && is_elfldr_running) {
-+        await log("autoload: waiting 2 s for elfldr to bind 9021...", LogLevel.LOG);
-+        setTimeout(function () {
++        await log("autoload: waiting for elfldr to accept on 9021...", LogLevel.LOG);
++        let wkal_ready = false;
++        for (let wkal_i = 0; wkal_i < 50 && !wkal_ready; ++wkal_i) {
++            wkal_ready = await wkal_elfldr_accepting();
++            if (!wkal_ready) await new Promise(resolve => setTimeout(resolve, 200));
++        }
++        if (!wkal_ready) {
++            await log("autoload failed: elfldr never accepted on 9021", LogLevel.ERROR);
++            try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false, why: "the ELF loader is not accepting connections on port 9021" }, "*"); } catch (e) { }
++        } else {
 +            window.dispatchEvent(new CustomEvent(MAINLOOP_EXECUTE_PAYLOAD_REQUEST, {
 +                detail: {
 +                    displayTitle: "Autoload",
@@ -79,7 +100,7 @@ index 9cbb675..fc07bce 100644
 +                    wkalAutoload: true
 +                }
 +            }));
-+        }, 2000);
++        }
 +    } else if (wkalAutoloadName && !is_elfldr_running) {
 +        await log("autoload failed: elfldr did not load", LogLevel.ERROR);
 +        try { window.parent.postMessage({ type: "wkal", kind: "autoload", ok: false, why: "elfldr did not load" }, "*"); } catch (e) { }
@@ -87,7 +108,7 @@ index 9cbb675..fc07bce 100644
  
      while (true) {
  
-@@ -1198,7 +1216,7 @@ async function main(userlandRW, wkOnly = false) {
+@@ -1198,7 +1237,7 @@ async function main(userlandRW, wkOnly = false) {
                      }
                  } else {
                      updateToastMessage(toast, `${payload_info.displayTitle}: Fetching...`);
@@ -96,7 +117,7 @@ index 9cbb675..fc07bce 100644
  
                      if (!payload_info.toPort) {
                          if (wkOnly) {
-@@ -1220,11 +1238,19 @@ async function main(userlandRW, wkOnly = false) {
+@@ -1220,11 +1259,19 @@ async function main(userlandRW, wkOnly = false) {
                          updateToastMessage(toast, `${payload_info.displayTitle}: Sending to port ${payload_info.toPort}...`);
                          await send_buffer_to_port(elf_store, total_sz, payload_info.toPort);
                          updateToastMessage(toast, `${payload_info.displayTitle}: Sent to port ${payload_info.toPort}`);

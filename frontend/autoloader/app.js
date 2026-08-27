@@ -869,11 +869,72 @@
     if (picked === 'poops' || picked === 'p2jb') {
       clearSlopkitState();
     }
-    try {
-      exploitEl.src = EXPLOIT_URL;
-    } catch (e) { }
 
-    setTimeout(revealExploit, 1500);
+    /* Show landing page with 2-second countdown before starting exploit */
+    showLandingPage(function () {
+      /* After countdown, start the exploit */
+      try {
+        exploitEl.src = EXPLOIT_URL;
+      } catch (e) { }
+
+      setTimeout(revealExploit, 1500);
+    });
+  }
+
+  function showLandingPage(callback) {
+    var landingEl = document.getElementById('landing');
+    var countdownEl = document.getElementById('countdownValue');
+    var cancelBtn = document.getElementById('cancelBtn');
+    var retryBtn = document.getElementById('retryBtn');
+    var secondsLeft = 2;
+    var countdownInterval = null;
+    var isCancelled = false;
+
+    if (!landingEl || !countdownEl) {
+      callback();
+      return;
+    }
+
+    var startCountdown = function () {
+      secondsLeft = 2;
+      isCancelled = false;
+      landingEl.hidden = false;
+      landingEl.classList.add('show');
+      if (cancelBtn) cancelBtn.hidden = false;
+      if (retryBtn) retryBtn.hidden = true;
+
+      countdownInterval = setInterval(function () {
+        if (secondsLeft <= 0) {
+          clearInterval(countdownInterval);
+          landingEl.classList.remove('show');
+          landingEl.classList.add('hide');
+          setTimeout(function () {
+            landingEl.hidden = true;
+            callback();
+          }, 300);
+          return;
+        }
+        countdownEl.textContent = secondsLeft;
+        secondsLeft--;
+      }, 1000);
+    };
+
+    var cancelCountdown = function () {
+      isCancelled = true;
+      clearInterval(countdownInterval);
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (retryBtn) retryBtn.hidden = false;
+    };
+
+    var retryCountdown = function () {
+      if (retryBtn) retryBtn.hidden = true;
+      startCountdown();
+    };
+
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelCountdown);
+    if (retryBtn) retryBtn.addEventListener('click', retryCountdown);
+
+    startCountdown();
   }
 
   window.addEventListener('load', start);

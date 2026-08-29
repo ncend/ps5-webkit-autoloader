@@ -882,7 +882,7 @@
   }
 
   function showLandingPage(callback) {
-    var landingEl = document.getElementById('landing');
+    var splashEl = document.getElementById('splash');
     var countdownEl = document.getElementById('countdownValue');
     var cancelBtn = document.getElementById('cancelBtn');
     var retryBtn = document.getElementById('retryBtn');
@@ -890,7 +890,7 @@
     var countdownInterval = null;
     var isCancelled = false;
 
-    if (!landingEl || !countdownEl) {
+    if (!splashEl || !countdownEl) {
       callback();
       return;
     }
@@ -898,18 +898,15 @@
     var startCountdown = function () {
       secondsLeft = 2;
       isCancelled = false;
-      landingEl.hidden = false;
-      landingEl.classList.add('show');
       if (cancelBtn) cancelBtn.hidden = false;
       if (retryBtn) retryBtn.hidden = true;
 
       countdownInterval = setInterval(function () {
         if (secondsLeft <= 0) {
           clearInterval(countdownInterval);
-          landingEl.classList.remove('show');
-          landingEl.classList.add('hide');
+          splashEl.classList.add('hide');
           setTimeout(function () {
-            landingEl.hidden = true;
+            splashEl.hidden = true;
             callback();
           }, 300);
           return;
